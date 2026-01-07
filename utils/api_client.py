@@ -143,7 +143,7 @@ class APIClient:
         url = f"{self.base_url}{endpoint}"
         
         payload = {"username": username}
-        headers = {"Authorization": pre_auth_token, "Content-Type": "application/json"}
+        headers = {"Authorization": f"PreAuth {pre_auth_token}", "Content-Type": "application/json"}
         
         try:
             logger.info(f"Setting username: {username}")

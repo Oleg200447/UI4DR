@@ -84,14 +84,14 @@ def handle_oauth_callback():
         return False
     
     # Verify state (CSRF protection)
-    expected_state = st.session_state.get("oauth_state")
+    expected_state = cookies.get("oauth_state")
     if state != expected_state:
-        st.error("⚠️ Invalid state parameter. Possible CSRF attack.")
+        st.error(f"⚠️ Invalid state parameter. Possible CSRF attack.{state,expected_state}")
         logger.warning("OAuth state mismatch")
         return False
     
-    # Get code verifier from session
-    code_verifier = st.session_state.get("code_verifier")
+    # Get code verifier from cookies
+    code_verifier = cookies.get("code_verifier")
     if not code_verifier:
         st.error("⚠️ Code verifier not found. Please try again.")
         return False
@@ -105,6 +105,13 @@ def handle_oauth_callback():
                 # User is authenticated
                 access_token = response.get("access_token")
                 cookies["access_token"] = access_token
+                
+                # Clear temporary OAuth cookies
+                if "oauth_state" in cookies:
+                    del cookies["oauth_state"]
+                if "code_verifier" in cookies:
+                    del cookies["code_verifier"]
+                
                 cookies.save()
                 
                 # Update API client with token
@@ -224,9 +231,10 @@ def show_login():
             # Generate state for CSRF protection
             state = st.session_state.oauth_manager.generate_state()
             
-            # Store in session
-            st.session_state.code_verifier = code_verifier
-            st.session_state.oauth_state = state
+            # Store in cookies (not session state, as it won't survive redirect)
+            cookies["code_verifier"] = code_verifier
+            cookies["oauth_state"] = state
+            cookies.save()
             
             # Get authorization URL
             auth_url = st.session_state.oauth_manager.get_authorization_url(state, code_challenge)
