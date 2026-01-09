@@ -43,7 +43,7 @@ if 'initialized' not in st.session_state:
     st.session_state.api_client = None
     st.session_state.user_id = None
     st.session_state.username = None
-    logger.info("Session state initialized")
+    logger.info(f"Session state initialized {cookies.get('access_token')}")
 
 # Load configuration
 GATEWAY_URL = os.getenv("GATEWAY_URL", "http://kong:8015")
@@ -261,7 +261,8 @@ def main():
     # Check if user is authenticated
     access_token = cookies.get("access_token")
     
-    if SessionManager.is_authenticated(access_token):
+    # Check that token exists, is not None, and is not empty string
+    if access_token and access_token != "" and SessionManager.is_authenticated(access_token):
         # User is authenticated, extract info if not already done
         if not st.session_state.user_id:
             st.session_state.user_id = SessionManager.extract_user_id_from_token(access_token)

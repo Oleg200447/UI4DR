@@ -33,6 +33,19 @@ cookies = EncryptedCookieManager(
 if not cookies.ready():
     st.stop()
 
+# Handle logout redirect
+if st.session_state.get('logging_out'):
+    if cookies['access_token'] == "":
+        st.session_state.logging_out = False
+        st.session_state.clear()
+        st.switch_page("app.py")
+    else:
+        cookies["access_token"] = ""
+        cookies["oauth_state"] = ""
+        cookies["code_verifier"] = ""
+        cookies.save()
+        st.rerun()
+
 # Check authentication
 access_token = cookies.get("access_token")
 if not SessionManager.is_authenticated(access_token):
@@ -54,10 +67,22 @@ if 'user_id' not in st.session_state or not st.session_state.user_id:
 
 def logout():
     """Logout user."""
+    # Clear cookies
     cookies["access_token"] = ""
+    cookies["oauth_state"] = ""
+    cookies["code_verifier"] = ""
     cookies.save()
-    st.session_state.clear()
-    st.switch_page("app.py")
+
+    logger.info("User logged out")
+
+    # Set logout flag for two-step logout
+
+    # Clear session state (but keep logging_out flag)
+    #st.session_state.clear()
+    st.session_state.logging_out = True
+
+    # Show logout message and rerun
+    st.rerun()
 
 
 def show_header():
@@ -69,7 +94,7 @@ def show_header():
     
     with col2:
         st.write(f"👤 **{st.session_state.username}**")
-        if st.button("Logout", type="secondary"):
+        if st.button("Logout", type="secondary", key="logout_chat"):
             logout()
 
 
