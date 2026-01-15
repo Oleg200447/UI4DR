@@ -105,36 +105,46 @@ def download_document(doc_id: str, filename: str):
     try:
         with st.spinner(f"Downloading {filename}..."):
             file_data = st.session_state.api_client.download_document(doc_id)
-            
-            # Offer download to user
-            st.download_button(
-                label=f"💾 Save {filename}",
-                data=file_data,
-                file_name=filename,
-                mime="application/octet-stream",
-                key=f"download_{doc_id}"
-            )
-            
+
+            # Store download data in session state per document
+            if 'download_data' not in st.session_state:
+                st.session_state.download_data = {}
+            st.session_state.download_data[doc_id] = {
+                'file_data': file_data,
+                'filename': filename,
+                'doc_id': doc_id
+            }
+
             logger.info(f"Document downloaded: {doc_id}")
-            
+
     except Exception as e:
         st.error(f"❌ Download failed: {str(e)}")
         logger.error(f"Download error: {e}")
 
 
+def clear_download_data():
+    """Clear download data from session state."""
+    if 'download_data' in st.session_state:
+        del st.session_state.download_data
+
+
 def perform_search(query: str, selected_topics: list, filters: dict):
-    """Perform search and display results."""
+    """Perform search and store results in session state."""
+    # Clear previous download data and search results
+    clear_download_data()
+    clear_search_results()
+
     # Validate query
     is_valid, error_msg = Validator.validate_search_query(query)
     if not is_valid:
         st.error(f"❌ {error_msg}")
         return
-    
+
     # Validate topic selection
     if not selected_topics:
         st.warning("⚠️ Please select at least one topic to search")
         return
-    
+
     try:
         with st.spinner("🔎 Searching..."):
             # Perform search
@@ -144,55 +154,95 @@ def perform_search(query: str, selected_topics: list, filters: dict):
                 indices=selected_topics,
                 filters=filters if filters else None
             )
-            
+
             results = response.get("results", [])
             query_expanded = response.get("query_expanded", query)
             processing_time = response.get("processing_time_ms", 0)
-            
+
             logger.info(f"Search completed: {len(results)} results in {processing_time}ms")
-            
-            # Display results
-            st.success(f"✅ Found {len(results)} results in {processing_time:.2f}ms")
-            
-            if query_expanded != query:
-                st.info(f"🔄 Query expanded to: **{query_expanded}**")
-            
-            st.markdown("---")
-            
-            if not results:
-                st.warning("No results found. Try different keywords or topics.")
-            else:
-                for idx, result in enumerate(results, 1):
-                    with st.container():
-                        col1, col2 = st.columns([4, 1])
-                        
-                        with col1:
-                            st.subheader(f"{idx}. {result.get('doc_name', 'Untitled')}")
-                            
-                            # Show snippet if available
-                            snippet = result.get('snippet', result.get('text', ''))
-                            if snippet:
-                                st.markdown(f"*{snippet[:300]}...*" if len(snippet) > 300 else f"*{snippet}*")
-                            
-                            # Show metadata
-                            score = result.get('score', 0)
-                            page_number = result.get('page_number', 'N/A')
-                            
-                            st.caption(f"**Score:** {score:.4f} | **Page:** {page_number}")
-                        
-                        with col2:
-                            doc_id = result.get('doc_id')
-                            filename = result.get('doc_name', 'document')
-                            logger.info(f"AHAHAH{doc_id,filename}")
-                            if doc_id and st.button("📥 Download", key=f"btn_download_{idx}"):
-                                logger.info(f"WWWWW")
-                                download_document(doc_id, filename)
-                        
-                        st.markdown("---")
-            
+
+            # Store search results in session state
+            st.session_state.search_results = {
+                'results': results,
+                'query': query,
+                'query_expanded': query_expanded,
+                'processing_time': processing_time,
+                'selected_topics': selected_topics,
+                'filters': filters
+            }
+
     except Exception as e:
         st.error(f"❌ Search failed: {str(e)}")
         logger.error(f"Search error: {e}")
+
+
+def display_search_results():
+    """Display search results from session state."""
+    if 'search_results' not in st.session_state:
+        return
+
+    search_data = st.session_state.search_results
+    results = search_data['results']
+    query = search_data['query']
+    query_expanded = search_data['query_expanded']
+    processing_time = search_data['processing_time']
+
+    # Display results
+    st.success(f"✅ Found {len(results)} results in {processing_time:.2f}ms")
+
+    if query_expanded != query:
+        st.info(f"🔄 Query expanded to: **{query_expanded}**")
+
+    st.markdown("---")
+
+    if not results:
+        st.warning("No results found. Try different keywords or topics.")
+    else:
+        for idx, result in enumerate(results, 1):
+            with st.container():
+                col1, col2 = st.columns([4, 1])
+
+                with col1:
+                    st.subheader(f"{idx}. {result.get('doc_name', 'Untitled')}")
+
+                    # Show snippet if available
+                    snippet = result.get('snippet', result.get('text', ''))
+                    if snippet:
+                        st.markdown(f"*{snippet[:300]}...*" if len(snippet) > 300 else f"*{snippet}*")
+
+                    # Show metadata
+                    score = result.get('score', 0)
+                    page_number = result.get('page_number', 'N/A')
+
+                    st.caption(f"**Score:** {score:.4f} | **Page:** {page_number}")
+
+                with col2:
+                    doc_id = result.get('doc_id')
+                    filename = result.get('doc_name', 'document')
+                    if doc_id:
+                        # Check if download data is ready for this document
+                        download_ready = ('download_data' in st.session_state and
+                                        doc_id in st.session_state.download_data)
+
+                        if download_ready:
+                            download_info = st.session_state.download_data[doc_id]
+                            st.download_button(
+                                label=f"💾 Save {download_info['filename']}",
+                                data=download_info['file_data'],
+                                file_name=download_info['filename'],
+                                mime="application/octet-stream",
+                                key=f"download_btn_{doc_id}"
+                            )
+                        else:
+                            st.button("📥 Download", key=f"btn_download_{doc_id}", on_click=download_document, args=(doc_id, filename))
+
+                st.markdown("---")
+
+
+def clear_search_results():
+    """Clear search results from session state."""
+    if 'search_results' in st.session_state:
+        del st.session_state.search_results
 
 
 def main():
@@ -317,6 +367,9 @@ def main():
         perform_search(query, selected_topics, filters)
     elif search_button and not query:
         st.warning("⚠️ Please enter a search query")
+
+    # Always display search results if they exist
+    display_search_results()
 
 
 if __name__ == "__main__":
