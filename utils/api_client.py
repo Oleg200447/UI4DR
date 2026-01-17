@@ -422,3 +422,43 @@ class APIClient:
         except RequestException as e:
             logger.error(f"Error performing search: {e}")
             raise Exception(f"Search failed: {str(e)}")
+    
+    # ==================== AGENT/CHAT SERVICE ====================
+    
+    def chat(
+        self,
+        question: str,
+        topics: List[str]
+    ) -> Dict[str, Any]:
+        """Send a chat message to the agent.
+        
+        Args:
+            question: User's question or message
+            topics: List of topic IDs to search in
+            
+        Returns:
+            Dict with 'response' and 'session_id' fields
+        """
+        endpoint = "/api/v1/chat"
+        url = f"{self.base_url}{endpoint}"
+        
+        payload = {
+            "question": question,
+            "topics": topics
+        }
+        
+        try:
+            logger.info(f"Sending chat message with {len(topics)} topics")
+            response = requests.post(
+                url,
+                json=payload,
+                headers=self._get_headers(),
+                timeout=60  # Longer timeout for agent processing
+            )
+            return self._handle_response(response, endpoint)
+        except Timeout:
+            logger.error(f"Timeout calling {endpoint}")
+            raise Exception("Request timeout. The agent is taking too long to respond.")
+        except RequestException as e:
+            logger.error(f"Error in chat request: {e}")
+            raise Exception(f"Chat request failed: {str(e)}")
