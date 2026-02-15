@@ -2,11 +2,14 @@
 import streamlit as st
 import logging
 import os
+import html
 from dotenv import load_dotenv
 from streamlit_cookies_manager import EncryptedCookieManager
 from utils.auth import SessionManager
 from utils.api_client import APIClient
 from utils.validators import Validator
+from components.styles import get_global_styles
+from components.header import show_header
 
 # Load environment variables
 load_dotenv()
@@ -22,8 +25,12 @@ logger = logging.getLogger(__name__)
 st.set_page_config(
     page_title="DeepResearch - Search",
     page_icon="🔍",
-    layout="wide"
+    layout="wide",
+    initial_sidebar_state="collapsed"
 )
+
+# Inject global styles
+st.markdown(get_global_styles(), unsafe_allow_html=True)
 
 # Initialize cookie manager
 cookies = EncryptedCookieManager(
@@ -69,35 +76,13 @@ if 'user_id' not in st.session_state or not st.session_state.user_id:
 
 def logout():
     """Logout user."""
-    # Clear cookies
     cookies["access_token"] = ""
     cookies["oauth_state"] = ""
     cookies["code_verifier"] = ""
     cookies.save()
-
     logger.info("User logged out")
-
-    # Set logout flag for two-step logout
-
-    # Clear session state (but keep logging_out flag)
-    #st.session_state.clear()
     st.session_state.logging_out = True
-
-    # Show logout message and rerun
     st.rerun()
-
-
-def show_header():
-    """Show page header with user info."""
-    col1, col2 = st.columns([3, 1])
-    
-    with col1:
-        st.title("🔍 Search Documents")
-    
-    with col2:
-        st.write(f"👤 **{st.session_state.username}**")
-        if st.button("Logout", type="secondary", key="logout_search"):
-            logout()
 
 
 def download_document(doc_id: str, filename: str):
@@ -105,8 +90,6 @@ def download_document(doc_id: str, filename: str):
     try:
         with st.spinner(f"Downloading {filename}..."):
             file_data = st.session_state.api_client.download_document(doc_id)
-
-            # Store download data in session state per document
             if 'download_data' not in st.session_state:
                 st.session_state.download_data = {}
             st.session_state.download_data[doc_id] = {
@@ -114,9 +97,7 @@ def download_document(doc_id: str, filename: str):
                 'filename': filename,
                 'doc_id': doc_id
             }
-
             logger.info(f"Document downloaded: {doc_id}")
-
     except Exception as e:
         st.error(f"❌ Download failed: {str(e)}")
         logger.error(f"Download error: {e}")
@@ -128,31 +109,26 @@ def clear_download_data():
         del st.session_state.download_data
 
 
-def perform_search(query: str, selected_topics: list, filters: dict):
+def perform_search(query: str, selected_topics: list):
     """Perform search and store results in session state."""
-    # Clear previous download data and search results
     clear_download_data()
     clear_search_results()
 
-    # Validate query
     is_valid, error_msg = Validator.validate_search_query(query)
     if not is_valid:
         st.error(f"❌ {error_msg}")
         return
 
-    # Validate topic selection
     if not selected_topics:
         st.warning("⚠️ Please select at least one topic to search")
         return
 
     try:
         with st.spinner("🔎 Searching..."):
-            # Perform search
             response = st.session_state.api_client.search(
                 query=query,
                 user_id=st.session_state.user_id,
                 indices=selected_topics,
-                filters=filters if filters else None
             )
 
             results = response.get("results", [])
@@ -161,19 +137,28 @@ def perform_search(query: str, selected_topics: list, filters: dict):
 
             logger.info(f"Search completed: {len(results)} results in {processing_time}ms")
 
-            # Store search results in session state
             st.session_state.search_results = {
                 'results': results,
                 'query': query,
                 'query_expanded': query_expanded,
                 'processing_time': processing_time,
                 'selected_topics': selected_topics,
-                'filters': filters
             }
-
     except Exception as e:
         st.error(f"❌ Search failed: {str(e)}")
         logger.error(f"Search error: {e}")
+
+
+def _make_snippet(text: str, max_len: int = 300) -> str:
+    """Truncate text and always append '...' at the end."""
+    if not text:
+        return "..."
+    text = text.strip()
+    if len(text) > max_len:
+        text = text[:max_len].rstrip()
+    if not text.endswith("..."):
+        text = text.rstrip(".") + "..."
+    return text
 
 
 def display_search_results():
@@ -187,56 +172,76 @@ def display_search_results():
     query_expanded = search_data['query_expanded']
     processing_time = search_data['processing_time']
 
-    # Display results
-    st.success(f"✅ Found {len(results)} results in {processing_time:.2f}ms")
+    st.markdown(
+        f"""
+        <div style="display:flex;gap:0.6rem;flex-wrap:wrap;margin-bottom:0.75rem;">
+            <span class="stat-badge">✅ {len(results)} result{"s" if len(results) != 1 else ""}</span>
+            <span class="stat-badge info">⚡ {processing_time:.0f} ms</span>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
 
     if query_expanded != query:
         st.info(f"🔄 Query expanded to: **{query_expanded}**")
 
-    st.markdown("---")
-
     if not results:
-        st.warning("No results found. Try different keywords or topics.")
+        st.markdown(
+            """
+            <div class="empty-state">
+                <div class="icon">🔍</div>
+                <div class="text">No results found. Try different keywords or topics.</div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
     else:
         for idx, result in enumerate(results, 1):
-            with st.container():
-                col1, col2 = st.columns([4, 1])
+            doc_name = html.escape(result.get('doc_name', 'Untitled'))
+            snippet_raw = result.get('snippet', result.get('text', ''))
+            snippet = html.escape(_make_snippet(snippet_raw))
 
-                with col1:
-                    st.subheader(f"{idx}. {result.get('doc_name', 'Untitled')}")
+            st.markdown(
+                f"""
+                <div class="result-card">
+                    <div class="doc-title">
+                        <span class="idx">{idx}</span>
+                        {doc_name}
+                    </div>
+                    <div class="snippet">{snippet}</div>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
 
-                    # Show snippet if available
-                    snippet = result.get('snippet', result.get('text', ''))
-                    if snippet:
-                        st.markdown(f"*{snippet[:300]}...*" if len(snippet) > 300 else f"*{snippet}*")
+            doc_id = result.get('doc_id')
+            filename = result.get('doc_name', 'document')
+            if doc_id:
+                download_ready = (
+                    'download_data' in st.session_state
+                    and doc_id in st.session_state.download_data
+                )
 
-                    # Show metadata
-                    score = result.get('score', 0)
-                    page_number = result.get('page_number', 'N/A')
-
-                    st.caption(f"**Score:** {score:.4f} | **Page:** {page_number}")
-
-                with col2:
-                    doc_id = result.get('doc_id')
-                    filename = result.get('doc_name', 'document')
-                    if doc_id:
-                        # Check if download data is ready for this document
-                        download_ready = ('download_data' in st.session_state and
-                                        doc_id in st.session_state.download_data)
-
-                        if download_ready:
-                            download_info = st.session_state.download_data[doc_id]
-                            st.download_button(
-                                label=f"💾 Save {download_info['filename']}",
-                                data=download_info['file_data'],
-                                file_name=download_info['filename'],
-                                mime="application/octet-stream",
-                                key=f"download_btn_{doc_id}"
-                            )
-                        else:
-                            st.button("📥 Download", key=f"btn_download_{doc_id}", on_click=download_document, args=(doc_id, filename))
-
-                st.markdown("---")
+                col_spacer, col_btn = st.columns([5, 1])
+                with col_btn:
+                    if download_ready:
+                        download_info = st.session_state.download_data[doc_id]
+                        st.download_button(
+                            label="💾 Save",
+                            data=download_info['file_data'],
+                            file_name=download_info['filename'],
+                            mime="application/octet-stream",
+                            key=f"download_btn_{doc_id}",
+                            use_container_width=True,
+                        )
+                    else:
+                        st.button(
+                            "📥 Download",
+                            key=f"btn_download_{doc_id}",
+                            on_click=download_document,
+                            args=(doc_id, filename),
+                            use_container_width=True,
+                        )
 
 
 def clear_search_results():
@@ -247,128 +252,84 @@ def clear_search_results():
 
 def main():
     """Main search page logic."""
-    show_header()
-    
-    st.markdown("---")
-    
+    show_header(
+        title="Search Documents",
+        icon="🔍",
+        logout_callback=logout,
+        username=st.session_state.username or "",
+        active_page="search",
+        key_suffix="search",
+    )
+
     # Load readable topics
     try:
         if 'readable_topics' not in st.session_state:
             with st.spinner("Loading topics..."):
                 topics = st.session_state.api_client.get_readable_topics()
                 st.session_state.readable_topics = topics
-        
+
         topics = st.session_state.readable_topics
-        
+
         if not topics:
-            st.warning("⚠️ No topics available. Please create or get access to topics first.")
+            st.markdown(
+                """
+                <div class="empty-state">
+                    <div class="icon">📁</div>
+                    <div class="text">No topics available. Create or get access to topics first.</div>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
             return
-        
     except Exception as e:
         st.error(f"❌ Failed to load topics: {str(e)}")
         logger.error(f"Error loading topics: {e}")
         return
-    
-    # Search form
-    col1, col2 = st.columns([2, 1])
-    
-    with col1:
+
+    # ── Search bar ──
+    st.markdown('<div class="search-area">', unsafe_allow_html=True)
+
+    col_input, col_btn = st.columns([4, 1])
+
+    with col_input:
         query = st.text_input(
             "Search Query",
-            placeholder="Enter your search query...",
-            help="Enter keywords to search across selected topics"
+            placeholder="What are you looking for?",
+            label_visibility="collapsed",
         )
-    
-    with col2:
-        st.write("")  # Spacing
-        st.write("")  # Spacing
-        search_button = st.button("🔍 Search", type="primary", use_container_width=True)
-    
-    # Topic selection
-    st.subheader("📁 Select Topics to Search")
-    
-    # Create topic options
+
+    with col_btn:
+        search_button = st.button("🔍  Search", type="primary", use_container_width=True)
+
+    st.markdown('</div>', unsafe_allow_html=True)
+
+    # ── Topic selection ──
+    st.markdown('<div class="section-title">📁 Topics to search</div>', unsafe_allow_html=True)
+
     topic_options = {}
-    system_topics = []
-    user_topics = []
-    
     for topic in topics:
         topic_id = str(topic.get("id"))
         topic_name = topic.get("name")
         is_system = topic.get("is_system", False)
-        
         display_name = f"🔒 {topic_name}" if is_system else f"📁 {topic_name}"
         topic_options[display_name] = topic_id
-        
-        if is_system:
-            system_topics.append(display_name)
-        else:
-            user_topics.append(display_name)
-    
-    # Show topics in columns
-    if system_topics or user_topics:
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            if system_topics:
-                st.write("**System Topics**")
-        with col2:
-            if user_topics:
-                st.write("**Your Topics**")
-    
-    # Multi-select for topics
+
     selected_topic_names = st.multiselect(
         "Topics",
         options=list(topic_options.keys()),
         default=list(topic_options.keys()),
         label_visibility="collapsed"
     )
-    
-    # Get selected topic IDs
+
     selected_topics = [topic_options[name] for name in selected_topic_names]
-    
-    # Filters section (collapsible)
-    with st.expander("🔧 Advanced Filters", expanded=False):
-        st.write("Configure optional search filters")
-        
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            min_score = st.slider(
-                "Minimum Score",
-                min_value=0.0,
-                max_value=1.0,
-                value=0.0,
-                step=0.01,
-                help="Filter results by minimum relevance score"
-            )
-        
-        with col2:
-            max_results = st.number_input(
-                "Max Results",
-                min_value=1,
-                max_value=100,
-                value=20,
-                help="Maximum number of results to return"
-            )
-        
-        use_filters = st.checkbox("Apply filters", value=False)
-    
-    # Build filters dict
-    filters = None
-    if use_filters:
-        filters = {
-            "min_score": min_score,
-            "max_results": max_results
-        }
-    
-    # Perform search on button click
+
+    # Perform search
     if search_button and query:
-        perform_search(query, selected_topics, filters)
+        perform_search(query, selected_topics)
     elif search_button and not query:
         st.warning("⚠️ Please enter a search query")
 
-    # Always display search results if they exist
+    # Display results
     display_search_results()
 
 
