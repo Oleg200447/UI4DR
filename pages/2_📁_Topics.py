@@ -2,12 +2,15 @@
 import streamlit as st
 import logging
 import os
+import html
 from datetime import datetime
 from dotenv import load_dotenv
 from streamlit_cookies_manager import EncryptedCookieManager
 from utils.auth import SessionManager
 from utils.api_client import APIClient
 from utils.validators import Validator
+from components.styles import get_global_styles
+from components.header import show_header
 
 # Load environment variables
 load_dotenv()
@@ -23,8 +26,12 @@ logger = logging.getLogger(__name__)
 st.set_page_config(
     page_title="DeepResearch - Topics",
     page_icon="📁",
-    layout="wide"
+    layout="wide",
+    initial_sidebar_state="collapsed"
 )
+
+# Inject global styles
+st.markdown(get_global_styles(), unsafe_allow_html=True)
 
 # Initialize cookie manager
 cookies = EncryptedCookieManager(
@@ -69,35 +76,14 @@ if 'user_id' not in st.session_state or not st.session_state.user_id:
 
 def logout():
     """Logout user."""
-    # Clear cookies
     cookies["access_token"] = ""
     cookies["oauth_state"] = ""
     cookies["code_verifier"] = ""
     cookies.save()
 
     logger.info("User logged out")
-
-    # Set logout flag for two-step logout
-
-    # Clear session state (but keep logging_out flag)
-    #st.session_state.clear()
     st.session_state.logging_out = True
-
-    # Show logout message and rerun
     st.rerun()
-
-
-def show_header():
-    """Show page header with user info."""
-    col1, col2 = st.columns([3, 1])
-    
-    with col1:
-        st.title("📁 Manage Topics")
-    
-    with col2:
-        st.write(f"👤 **{st.session_state.username}**")
-        if st.button("Logout", type="secondary", key="logout_topics"):
-            logout()
 
 
 def refresh_topics():
@@ -113,27 +99,27 @@ def refresh_topics():
 
 def create_topic_section():
     """Section for creating new topics."""
-    st.subheader("➕ Create New Topic")
-    
+    st.markdown('<div class="section-title">➕ Create New Topic</div>', unsafe_allow_html=True)
+
     with st.form("create_topic_form"):
         col1, col2 = st.columns([3, 1])
-        
+
         with col1:
             topic_name = st.text_input(
                 "Topic Name",
                 max_chars=100,
+                placeholder="Enter a topic name...",
                 help="Enter a name for your new topic"
             )
-        
+
         with col2:
             st.write("")  # Spacing
             st.write("")  # Spacing
             submit = st.form_submit_button("Create Topic", type="primary", use_container_width=True)
-        
+
         if submit:
-            # Validate topic name
             is_valid, error_msg = Validator.validate_topic_name(topic_name)
-            
+
             if not is_valid:
                 st.error(f"❌ {error_msg}")
             else:
@@ -142,11 +128,10 @@ def create_topic_section():
                         response = st.session_state.api_client.create_topic(topic_name)
                         st.success(f"✅ Topic '{topic_name}' created successfully!")
                         logger.info(f"Topic created: {topic_name}")
-                        
-                        # Refresh topics list
+
                         refresh_topics()
                         st.rerun()
-                        
+
                 except Exception as e:
                     st.error(f"❌ Failed to create topic: {str(e)}")
                     logger.error(f"Topic creation error: {e}")
@@ -159,15 +144,13 @@ def delete_topic_handler(topic_id: str, topic_name: str):
             st.session_state.api_client.delete_topic(topic_id)
             st.success(f"✅ Topic '{topic_name}' deleted successfully!")
             logger.info(f"Topic deleted: {topic_id}")
-            
-            # Clear selected topic if it was deleted
+
             if st.session_state.get('selected_topic_id') == topic_id:
                 st.session_state.selected_topic_id = None
-            
-            # Refresh topics list
+
             refresh_topics()
             st.rerun()
-            
+
     except Exception as e:
         st.error(f"❌ Failed to delete topic: {str(e)}")
         logger.error(f"Topic deletion error: {e}")
@@ -175,54 +158,67 @@ def delete_topic_handler(topic_id: str, topic_name: str):
 
 def show_topics_list():
     """Show list of editable topics."""
-    st.subheader("📚 Your Topics")
-    
+    st.markdown('<div class="section-title">📚 Your Topics</div>', unsafe_allow_html=True)
+
     topics = st.session_state.get('editable_topics', [])
-    
+
     if not topics:
-        st.info("You don't have any topics yet. Create one to get started!")
+        st.markdown(
+            """
+            <div class="empty-state">
+                <div class="icon">📁</div>
+                <div class="text">You don't have any topics yet. Create one above to get started!</div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
         return
-    
+
     for topic in topics:
         topic_id = str(topic.get('id'))
         topic_name = topic.get('name')
         is_system = topic.get('is_system', False)
-        
-        with st.container():
-            col1, col2, col3 = st.columns([3, 1, 1])
-            
-            with col1:
-                icon = "🔒" if is_system else "📁"
-                st.write(f"### {icon} {topic_name}")
-            
-            with col2:
-                if st.button("👁️ View", key=f"view_{topic_id}", use_container_width=True):
-                    st.session_state.selected_topic_id = topic_id
-                    st.session_state.selected_topic_name = topic_name
+        icon = "🔒" if is_system else "📁"
+
+        # Styled card via HTML
+        st.markdown(
+            f"""
+            <div class="topic-card">
+                <span class="topic-name">{icon} {html.escape(topic_name)}</span>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+        # Action buttons (Streamlit widgets)
+        col1, col2, col3 = st.columns([4, 1, 1])
+
+        with col2:
+            if st.button("👁️ View", key=f"view_{topic_id}", use_container_width=True):
+                st.session_state.selected_topic_id = topic_id
+                st.session_state.selected_topic_name = topic_name
+                st.rerun()
+
+        with col3:
+            if not is_system:
+                if st.button("🗑️ Delete", key=f"delete_{topic_id}", use_container_width=True):
+                    st.session_state[f'confirm_delete_{topic_id}'] = True
                     st.rerun()
-            
-            with col3:
-                if not is_system:
-                    if st.button("🗑️ Delete", key=f"delete_{topic_id}", use_container_width=True):
-                        st.session_state[f'confirm_delete_{topic_id}'] = True
-                        st.rerun()
-            
-            # Confirmation dialog for deletion
-            if st.session_state.get(f'confirm_delete_{topic_id}'):
-                st.warning(f"⚠️ Are you sure you want to delete '{topic_name}'? This action cannot be undone!")
-                
-                col1, col2, col3 = st.columns([1, 1, 2])
-                with col1:
-                    if st.button("✅ Yes, Delete", key=f"confirm_yes_{topic_id}"):
-                        st.session_state[f'confirm_delete_{topic_id}'] = False
-                        delete_topic_handler(topic_id, topic_name)
-                
-                with col2:
-                    if st.button("❌ Cancel", key=f"confirm_no_{topic_id}"):
-                        st.session_state[f'confirm_delete_{topic_id}'] = False
-                        st.rerun()
-            
-            st.markdown("---")
+
+        # Confirmation dialog for deletion
+        if st.session_state.get(f'confirm_delete_{topic_id}'):
+            st.warning(f"⚠️ Are you sure you want to delete **{topic_name}**? This action cannot be undone!")
+
+            col_y, col_n, col_space = st.columns([1, 1, 3])
+            with col_y:
+                if st.button("✅ Yes, Delete", key=f"confirm_yes_{topic_id}", use_container_width=True):
+                    st.session_state[f'confirm_delete_{topic_id}'] = False
+                    delete_topic_handler(topic_id, topic_name)
+
+            with col_n:
+                if st.button("❌ Cancel", key=f"confirm_no_{topic_id}", use_container_width=True):
+                    st.session_state[f'confirm_delete_{topic_id}'] = False
+                    st.rerun()
 
 
 def upload_document_handler(topic_id: str, uploaded_file):
@@ -230,39 +226,34 @@ def upload_document_handler(topic_id: str, uploaded_file):
     if not uploaded_file:
         st.warning("⚠️ Please select a file to upload")
         return
-    
-    # Validate file extension
+
     is_valid, error_msg = Validator.validate_file_extension(uploaded_file.name)
     if not is_valid:
         st.error(f"❌ {error_msg}")
         return
-    
-    # Validate file size
+
     file_size = uploaded_file.size
     is_valid, error_msg = Validator.validate_file_size(file_size)
     if not is_valid:
         st.error(f"❌ {error_msg}")
         return
-    
+
     try:
         with st.spinner(f"Uploading {uploaded_file.name}..."):
-            # Read file content
             file_content = uploaded_file.read()
-            
-            # Upload document
+
             response = st.session_state.api_client.upload_document(
                 topic_id=topic_id,
                 file_content=file_content,
                 filename=Validator.sanitize_filename(uploaded_file.name)
             )
-            
+
             st.success(f"✅ Document '{uploaded_file.name}' uploaded successfully!")
             logger.info(f"Document uploaded: {uploaded_file.name}")
-            
-            # Refresh documents list
+
             st.session_state[f'documents_{topic_id}'] = None
             st.rerun()
-            
+
     except Exception as e:
         st.error(f"❌ Upload failed: {str(e)}")
         logger.error(f"Document upload error: {e}")
@@ -275,11 +266,10 @@ def delete_document_handler(doc_id: str, filename: str, topic_id: str):
             st.session_state.api_client.delete_document(doc_id)
             st.success(f"✅ Document '{filename}' deleted successfully!")
             logger.info(f"Document deleted: {doc_id}")
-            
-            # Refresh documents list
+
             st.session_state[f'documents_{topic_id}'] = None
             st.rerun()
-            
+
     except Exception as e:
         st.error(f"❌ Failed to delete document: {str(e)}")
         logger.error(f"Document deletion error: {e}")
@@ -290,8 +280,7 @@ def download_document_handler(doc_id: str, filename: str):
     try:
         with st.spinner(f"Downloading {filename}..."):
             file_data = st.session_state.api_client.download_document(doc_id)
-            
-            # Offer download to user
+
             st.download_button(
                 label=f"💾 Save {filename}",
                 data=file_data,
@@ -299,16 +288,26 @@ def download_document_handler(doc_id: str, filename: str):
                 mime="application/octet-stream",
                 key=f"save_{doc_id}"
             )
-            
+
     except Exception as e:
         st.error(f"❌ Download failed: {str(e)}")
         logger.error(f"Download error: {e}")
 
 
+def _status_html(status: str) -> str:
+    """Return a styled status pill."""
+    if status == "success":
+        return '<span class="status-pill success">✅ Ready</span>'
+    elif status == "pending":
+        return '<span class="status-pill pending">⏳ Processing</span>'
+    else:
+        return f'<span class="status-pill default">ℹ️ {html.escape(status)}</span>'
+
+
 def show_topic_documents(topic_id: str, topic_name: str):
     """Show documents in a topic."""
-    st.subheader(f"📄 Documents in '{topic_name}'")
-    
+    st.markdown(f'<div class="section-title">📄 Documents in \'{html.escape(topic_name)}\'</div>', unsafe_allow_html=True)
+
     # Upload section
     with st.expander("📤 Upload Document", expanded=False):
         uploaded_file = st.file_uploader(
@@ -316,34 +315,43 @@ def show_topic_documents(topic_id: str, topic_name: str):
             type=['pdf', 'pptx', 'docx'],
             help="Only PDF, PPTX, and DOCX files are supported (max 50MB)"
         )
-        
+
         if st.button("Upload", type="primary"):
             upload_document_handler(topic_id, uploaded_file)
-    
+
     # Load documents
     try:
-        # Check cache
         if st.session_state.get(f'documents_{topic_id}') is None:
             with st.spinner("Loading documents..."):
                 documents = st.session_state.api_client.get_topic_documents(topic_id)
                 st.session_state[f'documents_{topic_id}'] = documents
-        
+
         documents = st.session_state[f'documents_{topic_id}']
-        
+
         if not documents:
-            st.info("No documents in this topic yet. Upload one to get started!")
+            st.markdown(
+                """
+                <div class="empty-state">
+                    <div class="icon">📄</div>
+                    <div class="text">No documents yet. Upload one to get started!</div>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
             return
-        
-        # Display documents
-        st.write(f"**Total Documents:** {len(documents)}")
-        st.markdown("---")
-        
+
+        st.markdown(
+            f'<span class="stat-badge neutral">📄 {len(documents)} document{"s" if len(documents) != 1 else ""}</span>',
+            unsafe_allow_html=True,
+        )
+        st.markdown("")
+
         for doc in documents:
             doc_id = str(doc.get('id'))
             filename = doc.get('filename', 'Untitled')
             status = doc.get('status', 'unknown')
             created_at = doc.get('created_at', '')
-            
+
             # Format timestamp
             try:
                 if isinstance(created_at, str):
@@ -351,61 +359,59 @@ def show_topic_documents(topic_id: str, topic_name: str):
                     created_at_str = dt.strftime('%Y-%m-%d %H:%M')
                 else:
                     created_at_str = str(created_at)
-            except:
+            except Exception:
                 created_at_str = str(created_at)
-            
-            with st.container():
-                col1, col2, col3, col4, col5 = st.columns([3, 1, 1, 1, 1])
-                
-                with col1:
-                    st.write(f"**{filename}**")
-                    st.caption(f"Uploaded: {created_at_str}")
-                
-                with col2:
-                    # Status indicator
-                    if status == "success":
-                        st.success("✅ Ready")
-                    elif status == "pending":
-                        st.warning("⏳ Processing")
-                    else:
-                        st.info(f"ℹ️ {status}")
-                
-                with col3:
-                    if st.button("🔄", key=f"refresh_{doc_id}", help="Refresh status"):
-                        try:
-                            doc_status = st.session_state.api_client.get_document_status(doc_id)
-                            # Update cached documents
-                            for d in documents:
-                                if str(d.get('id')) == doc_id:
-                                    d['status'] = doc_status.get('status', status)
-                            st.rerun()
-                        except Exception as e:
-                            st.error(f"❌ {str(e)}")
-                
-                with col4:
-                    if st.button("📥", key=f"download_{doc_id}", help="Download"):
-                        download_document_handler(doc_id, filename)
-                
-                with col5:
-                    if st.button("🗑️", key=f"del_doc_{doc_id}", help="Delete"):
-                        st.session_state[f'confirm_delete_doc_{doc_id}'] = True
+
+            # Document row card
+            st.markdown(
+                f"""
+                <div class="doc-row" style="display:flex;align-items:center;justify-content:space-between;">
+                    <div>
+                        <div style="font-weight:600;color:#e2e8f0;">{html.escape(filename)}</div>
+                        <div style="font-size:0.8rem;color:#64748b;margin-top:2px;">Uploaded {created_at_str}</div>
+                    </div>
+                    <div>{_status_html(status)}</div>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+
+            # Action buttons
+            col1, col2, col3, col4 = st.columns([5, 1, 1, 1])
+
+            with col2:
+                if st.button("🔄", key=f"refresh_{doc_id}", help="Refresh status"):
+                    try:
+                        doc_status = st.session_state.api_client.get_document_status(doc_id)
+                        for d in documents:
+                            if str(d.get('id')) == doc_id:
+                                d['status'] = doc_status.get('status', status)
                         st.rerun()
-                
-                # Confirmation dialog for deletion
-                if st.session_state.get(f'confirm_delete_doc_{doc_id}'):
-                    st.warning(f"⚠️ Delete '{filename}'?")
-                    col1, col2 = st.columns(2)
-                    with col1:
-                        if st.button("✅ Yes", key=f"confirm_yes_doc_{doc_id}"):
-                            st.session_state[f'confirm_delete_doc_{doc_id}'] = False
-                            delete_document_handler(doc_id, filename, topic_id)
-                    with col2:
-                        if st.button("❌ No", key=f"confirm_no_doc_{doc_id}"):
-                            st.session_state[f'confirm_delete_doc_{doc_id}'] = False
-                            st.rerun()
-                
-                st.markdown("---")
-                
+                    except Exception as e:
+                        st.error(f"❌ {str(e)}")
+
+            with col3:
+                if st.button("📥", key=f"download_{doc_id}", help="Download"):
+                    download_document_handler(doc_id, filename)
+
+            with col4:
+                if st.button("🗑️", key=f"del_doc_{doc_id}", help="Delete"):
+                    st.session_state[f'confirm_delete_doc_{doc_id}'] = True
+                    st.rerun()
+
+            # Confirmation dialog for deletion
+            if st.session_state.get(f'confirm_delete_doc_{doc_id}'):
+                st.warning(f"⚠️ Delete **{filename}**?")
+                col_y, col_n, col_s = st.columns([1, 1, 4])
+                with col_y:
+                    if st.button("✅ Yes", key=f"confirm_yes_doc_{doc_id}"):
+                        st.session_state[f'confirm_delete_doc_{doc_id}'] = False
+                        delete_document_handler(doc_id, filename, topic_id)
+                with col_n:
+                    if st.button("❌ No", key=f"confirm_no_doc_{doc_id}"):
+                        st.session_state[f'confirm_delete_doc_{doc_id}'] = False
+                        st.rerun()
+
     except Exception as e:
         st.error(f"❌ Failed to load documents: {str(e)}")
         logger.error(f"Error loading documents: {e}")
@@ -413,24 +419,24 @@ def show_topic_documents(topic_id: str, topic_name: str):
 
 def show_topic_users(topic_id: str, topic_name: str):
     """Show users with access to a topic."""
-    st.subheader(f"👥 User Access for '{topic_name}'")
-    
+    st.markdown(f'<div class="section-title">👥 User Access for \'{html.escape(topic_name)}\'</div>', unsafe_allow_html=True)
+
     # Add user section
     with st.expander("➕ Add User", expanded=False):
         with st.form("add_user_form"):
             col1, col2, col3 = st.columns([2, 1, 1])
-            
+
             with col1:
-                nickname = st.text_input("Username", help="Enter the username to add")
-            
+                nickname = st.text_input("Username", help="Enter the username to add", placeholder="e.g. john_doe")
+
             with col2:
                 role = st.selectbox("Role", options=["reader", "owner"])
-            
+
             with col3:
                 st.write("")  # Spacing
                 st.write("")  # Spacing
                 submit = st.form_submit_button("Add User", use_container_width=True)
-            
+
             if submit:
                 if not nickname:
                     st.error("❌ Please enter a username")
@@ -444,75 +450,89 @@ def show_topic_users(topic_id: str, topic_name: str):
                             )
                             st.success(f"✅ User '{nickname}' added as {role}!")
                             logger.info(f"User {nickname} added to topic {topic_id}")
-                            
-                            # Refresh users list
+
                             st.session_state[f'users_{topic_id}'] = None
                             st.rerun()
-                            
+
                     except Exception as e:
                         st.error(f"❌ Failed to add user: {str(e)}")
                         logger.error(f"Add user error: {e}")
-    
+
     # Load users
     try:
-        # Check cache
         if st.session_state.get(f'users_{topic_id}') is None:
             with st.spinner("Loading users..."):
                 users = st.session_state.api_client.get_topic_users(topic_id)
                 st.session_state[f'users_{topic_id}'] = users
-        
+
         users = st.session_state[f'users_{topic_id}']
-        
+
         if not users:
-            st.info("No users have access to this topic yet.")
+            st.markdown(
+                """
+                <div class="empty-state">
+                    <div class="icon">👥</div>
+                    <div class="text">No users have access to this topic yet.</div>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
             return
-        
-        # Display users
-        st.write(f"**Total Users:** {len(users)}")
-        st.markdown("---")
-        
+
+        st.markdown(
+            f'<span class="stat-badge neutral">👥 {len(users)} user{"s" if len(users) != 1 else ""}</span>',
+            unsafe_allow_html=True,
+        )
+        st.markdown("")
+
         for user in users:
             user_id = str(user.get('user_id'))
             username = user.get('username', 'Unknown')
             role = user.get('role', 'reader')
-            
-            with st.container():
-                col1, col2, col3 = st.columns([3, 1, 1])
-                
-                with col1:
-                    st.write(f"**{username}**")
-                    st.caption(f"Role: {role}")
-                
-                with col2:
-                    role_icon = "👑" if role == "owner" else "👁️"
-                    st.write(role_icon)
-                
-                with col3:
-                    if st.button("🗑️ Remove", key=f"remove_user_{user_id}"):
-                        st.session_state[f'confirm_remove_{user_id}'] = True
-                        st.rerun()
-                
-                # Confirmation dialog
-                if st.session_state.get(f'confirm_remove_{user_id}'):
-                    st.warning(f"⚠️ Remove '{username}' from this topic?")
-                    col1, col2 = st.columns(2)
-                    with col1:
-                        if st.button("✅ Yes", key=f"confirm_yes_user_{user_id}"):
-                            try:
-                                st.session_state.api_client.remove_user_from_topic(topic_id, user_id)
-                                st.success(f"✅ User '{username}' removed!")
-                                st.session_state[f'confirm_remove_{user_id}'] = False
-                                st.session_state[f'users_{topic_id}'] = None
-                                st.rerun()
-                            except Exception as e:
-                                st.error(f"❌ {str(e)}")
-                    with col2:
-                        if st.button("❌ No", key=f"confirm_no_user_{user_id}"):
+            role_icon = "👑" if role == "owner" else "👁️"
+            role_cls = "purple" if role == "owner" else "info"
+
+            st.markdown(
+                f"""
+                <div class="doc-row" style="display:flex;align-items:center;justify-content:space-between;">
+                    <div style="display:flex;align-items:center;gap:0.6rem;">
+                        <span style="font-size:1.2rem;">{role_icon}</span>
+                        <div>
+                            <div style="font-weight:600;color:#e2e8f0;">{html.escape(username)}</div>
+                            <div style="font-size:0.8rem;color:#94a3b8;">Role: {html.escape(role)}</div>
+                        </div>
+                    </div>
+                    <span class="stat-badge {role_cls}">{role_icon} {html.escape(role)}</span>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+
+            col1, col2 = st.columns([5, 1])
+            with col2:
+                if st.button("🗑️ Remove", key=f"remove_user_{user_id}", use_container_width=True):
+                    st.session_state[f'confirm_remove_{user_id}'] = True
+                    st.rerun()
+
+            # Confirmation dialog
+            if st.session_state.get(f'confirm_remove_{user_id}'):
+                st.warning(f"⚠️ Remove **{username}** from this topic?")
+                col_y, col_n, col_s = st.columns([1, 1, 4])
+                with col_y:
+                    if st.button("✅ Yes", key=f"confirm_yes_user_{user_id}"):
+                        try:
+                            st.session_state.api_client.remove_user_from_topic(topic_id, user_id)
+                            st.success(f"✅ User '{username}' removed!")
                             st.session_state[f'confirm_remove_{user_id}'] = False
+                            st.session_state[f'users_{topic_id}'] = None
                             st.rerun()
-                
-                st.markdown("---")
-                
+                        except Exception as e:
+                            st.error(f"❌ {str(e)}")
+                with col_n:
+                    if st.button("❌ No", key=f"confirm_no_user_{user_id}"):
+                        st.session_state[f'confirm_remove_{user_id}'] = False
+                        st.rerun()
+
     except Exception as e:
         st.error(f"❌ Failed to load users: {str(e)}")
         logger.error(f"Error loading users: {e}")
@@ -522,46 +542,57 @@ def show_topic_details():
     """Show detailed view of a selected topic."""
     topic_id = st.session_state.get('selected_topic_id')
     topic_name = st.session_state.get('selected_topic_name')
-    
+
     if not topic_id:
-        st.info("👈 Select a topic from the list to view its details")
+        st.markdown(
+            """
+            <div class="empty-state">
+                <div class="icon">👈</div>
+                <div class="text">Select a topic from the list to view its details.</div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
         return
-    
-    # Back button
+
     if st.button("← Back to Topics List"):
         st.session_state.selected_topic_id = None
         st.session_state.selected_topic_name = None
         st.rerun()
-    
-    st.markdown("---")
-    
+
+    st.markdown('<hr class="styled-divider">', unsafe_allow_html=True)
+
     # Tabs for different sections
     tab1, tab2 = st.tabs(["📄 Documents", "👥 User Access"])
-    
+
     with tab1:
         show_topic_documents(topic_id, topic_name)
-    
+
     with tab2:
         show_topic_users(topic_id, topic_name)
 
 
 def main():
     """Main topics page logic."""
-    show_header()
-    
-    st.markdown("---")
-    
+    show_header(
+        title="Manage Topics",
+        icon="📁",
+        logout_callback=logout,
+        username=st.session_state.username or "",
+        active_page="topics",
+        key_suffix="topics",
+    )
+
     # Load editable topics
     if 'editable_topics' not in st.session_state:
         refresh_topics()
-    
+
     # Check if a topic is selected for detailed view
     if st.session_state.get('selected_topic_id'):
         show_topic_details()
     else:
-        # Show topics list and creation form
         create_topic_section()
-        st.markdown("---")
+        st.markdown('<hr class="styled-divider">', unsafe_allow_html=True)
         show_topics_list()
 
 
